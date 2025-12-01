@@ -47,7 +47,7 @@ def build_column_values(payload: dict) -> dict:
 
         # Status (always ringing since this is triggered on incoming)
         "status": {
-            "label": "Ringing"
+            "label": "Answered"
         },
 
         # Caller Number
