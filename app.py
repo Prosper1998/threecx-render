@@ -6,140 +6,96 @@ from datetime import datetime
 app = Flask(__name__)
 
 # ====== CONFIG ======
-# TODO: put your REAL Monday API token here (the one that worked for create_item)
+# ⚠️ Make sure this is your REAL Monday API token
 MONDAY_TOKEN = "eyJhbGciOiJIUzI1NiJ9.eyJ0aWQiOjU5MTU3ODE5OCwiYWFpIjoxMSwidWlkIjo5NjQ0Nzc2MywiaWFkIjoiMjAyNS0xMS0yOFQwNTo1OTozMi4wMDBaIiwicGVyIjoibWU6d3JpdGUiLCJhY3RpZCI6Mjc3MzY3MTQsInJnbiI6ImV1YzEifQ.9Wez76_J_cHuK15tNti7hcrZJn455qeq-uDyC66IxKE"
-BOARD_ID = 5088250215  # your Monday board ID
+
+# Your Monday.com board ID
+BOARD_ID = 5088250215
 
 MONDAY_API_URL = "https://api.monday.com/v2"
 
 
+# ---------------------------------------------------------
+#  BUILD MONDAY COLUMN VALUES
+# ---------------------------------------------------------
 def build_column_values(payload: dict) -> dict:
-    """
-    Map incoming 3CX webhook JSON (or query params) into Monday.com column values.
-    Adjust the payload.get(...) keys if your 3CX field names differ.
-    """
+    """Maps incoming 3CX data into Monday.com columns."""
 
     # Caller number
     caller = (
         payload.get("caller")
-        or payload.get("CallerID")
-        or payload.get("from")
-        or payload.get("callerNumber")   # from 3CX Custom CRM URL
+        or payload.get("callerNumber")
         or "Unknown"
     )
 
-    # Agent / destination
-    agent = (
-        payload.get("agent")
-        or payload.get("Agent")
-        or payload.get("extension")
-        or payload.get("to")
+    # Caller Display Name
+    caller_name = (
+        payload.get("callerName")
+        or payload.get("CallerDisplayName")
         or ""
     )
 
-    # Raw status from 3CX
-    raw_status = (
-        payload.get("status")
-        or payload.get("Status")
-        or "Unknown"
-    )
+    # Start time: use what came from 3CX, or fallback to now
+    start_time = payload.get("start_time") or datetime.utcnow().isoformat()
 
-    # Normalize and map 3CX statuses to Monday labels
-    s = str(raw_status).strip().lower()
-
-    if s in ("completed", "answered", "connected", "ringing"):
-        status_label = "Answered"
-    elif s in ("missed", "unanswered", "no answer", "failed", "busy"):
-        status_label = "Unanswered"
-    else:
-        # Default if we don't recognize it
-        status_label = "Unanswered"
-
-    # Duration (seconds)
-    duration = (
-        payload.get("duration")
-        or payload.get("Duration")
-        or 0
-    )
-
-    # Start time / date
-    raw_start = (
-        payload.get("start_time")
-        or payload.get("StartTime")
-        or payload.get("timestamp")
-        or None
-    )
-
-    if raw_start:
-        try:
-            # Handle 'Z' (UTC) if present
-            raw_clean = str(raw_start).replace("Z", "+00:00")
-            dt = datetime.fromisoformat(raw_clean)
-        except Exception:
-            dt = datetime.utcnow()
-    else:
-        dt = datetime.utcnow()
-
-    monday_date_value = dt.date().isoformat()  # 'YYYY-MM-DD'
-
-    # Build Monday column values using your column IDs
+    # Build Monday column map
     column_values = {
-        # Date column
+        # Date column (today)
         "date4": {
-            "date": monday_date_value
+            "date": datetime.utcnow().date().isoformat()
         },
-        # Status column
+
+        # Status (always ringing since this is triggered on incoming)
         "status": {
-            "label": status_label
+            "label": "Ringing"
         },
-        # Caller number (text)
+
+        # Caller Number
         "text_mky3718k": str(caller),
-        # Agent / destination
-        "text_mky3878e": str(agent),
-        # Duration (seconds) as text
-        "text_mky3yh4m": str(duration),
+
+        # Caller Display Name
+        "text_mky7sv9z": str(caller_name),
+
+        # Start Time (ISO string)
+        "text_mky3yh4m": str(start_time),
     }
 
     return column_values
 
 
+# ---------------------------------------------------------
+#  MAIN WEBHOOK ROUTE (/3cx-webhook and /webhook)
+# ---------------------------------------------------------
 @app.route("/3cx-webhook", methods=["GET", "POST"])
 def threecx_webhook():
-    """
-    Receives data from 3CX and creates an item on your Monday board.
+    """Receives data from 3CX and creates an item on your Monday board."""
 
-    - For GET: used by "Open Contact in Custom CRM" URL
-      (callerNumber & callerName arrive as query parameters)
-    - For POST: future use for a proper JSON webhook
-    """
-
-    # Basic auth check
     if not MONDAY_TOKEN:
-        return jsonify({"error": "MONDAY_TOKEN is not set in app.py"}), 500
+        return jsonify({"error": "MONDAY_TOKEN missing"}), 500
 
+    # Handle simple GET from 3CX
     if request.method == "GET":
-        # 3CX Custom CRM URL hits this with query params
         payload = {
             "caller": request.args.get("callerNumber") or "Unknown",
-            # 3CX Custom CRM URL does not give agent/duration, so we stub them
-            "agent": "",
+            "callerName": request.args.get("callerName") or "",
             "status": "ringing",
-            "duration": 0,
-            "start_time": datetime.utcnow().isoformat()
+            "start_time": datetime.utcnow().isoformat(),
         }
+
+    # Handle POST (future 3CX webhooks)
     else:
-        # JSON POST from a real 3CX webhook (not used yet)
         payload = request.json or {}
 
     print("Received 3CX payload:", json.dumps(payload, indent=2))
 
-    # Build column values from incoming data
+    # Build Monday column values
     column_values = build_column_values(payload)
 
-    # Item name shown in the Monday board
+    # Item name on Monday board
     caller_value = column_values.get("text_mky3718k", "")
     item_name = f"Call from {caller_value or 'Unknown'}"
 
+    # GraphQL mutation
     mutation = """
     mutation ($board_id: ID!, $item_name: String!, $column_values: JSON!) {
       create_item (
@@ -161,33 +117,28 @@ def threecx_webhook():
     body = {
         "query": mutation,
         "variables": {
-            "board_id": str(BOARD_ID),                 # must be string for ID!
+            "board_id": str(BOARD_ID),
             "item_name": item_name,
-            "column_values": json.dumps(column_values)  # JSON string
+            "column_values": json.dumps(column_values),
         },
     }
 
+    # Send to Monday.com
     try:
         resp = requests.post(MONDAY_API_URL, json=body, headers=headers, timeout=10)
         print("Monday raw response:", resp.status_code, resp.text)
         data = resp.json()
     except Exception as e:
-        print("Error calling Monday API:", e)
-        return jsonify({"error": "Failed to reach Monday.com"}), 502
+        print("Error contacting Monday:", e)
+        return jsonify({"error": "Failed to reach Monday"}), 502
 
     if "errors" in data:
-        return jsonify({
-            "status": "monday_error",
-            "monday_response": data,
-        }), 500
+        return jsonify({"status": "monday_error", "monday_response": data}), 500
 
-    return jsonify({
-        "status": "ok",
-        "monday_response": data,
-    }), 200
+    return jsonify({"status": "ok", "monday_response": data}), 200
 
 
-# Alias so /webhook also works (for your browser tests & 3CX)
+# Alias route so 3CX can call /webhook (shorter)
 @app.route("/webhook", methods=["GET", "POST"])
 def webhook_alias():
     return threecx_webhook()
@@ -198,6 +149,7 @@ def root():
     return "3CX → Monday.com Webhook (Render) is running", 200
 
 
+# Local debug mode
 if __name__ == "__main__":
-    print("Starting Flask server on http://127.0.0.1:5000 ...")
+    print("Starting Flask server locally http://127.0.0.1:5000 ...")
     app.run(host="0.0.0.0", port=5000, debug=True)
