@@ -7,7 +7,7 @@ app = Flask(__name__)
 
 # ====== CONFIG ======
 # TODO: put your REAL Monday API token here (the one that worked for create_item)
-MONDAY_TOKEN = "YOUR_REAL_MONDAY_TOKEN"
+MONDAY_TOKEN = "eyJhbGciOiJIUzI1NiJ9.eyJ0aWQiOjU5MTU3ODE5OCwiYWFpIjoxMSwidWlkIjo5NjQ0Nzc2MywiaWFkIjoiMjAyNS0xMS0yOFQwNTo1OTozMi4wMDBaIiwicGVyIjoibWU6d3JpdGUiLCJhY3RpZCI6Mjc3MzY3MTQsInJnbiI6ImV1YzEifQ.9Wez76_J_cHuK15tNti7hcrZJn455qeq-uDyC66IxKE"
 BOARD_ID = 5088250215  # your Monday board ID
 
 MONDAY_API_URL = "https://api.monday.com/v2"
